@@ -31,24 +31,33 @@ import static com.univocity.parsers.csv.UnescapedQuoteHandling.*;
  * @see CsvParserSettings
  * @see CsvWriter
  * @see AbstractParser
+ *
+ * prev 感觉是在 quote 内部处理 quote 使用的
  */
 public final class CsvParser extends AbstractParser<CsvParserSettings> {
 
 	private boolean parseUnescapedQuotes;
 	private boolean parseUnescapedQuotesUntilDelimiter;
 	private boolean backToDelimiter;
-	private final boolean doNotEscapeUnquotedValues;
+	private final boolean doNotEscapeUnquotedValues; // 不对 unquote
 	private final boolean keepEscape;
 	private final boolean keepQuotes;
 
+	// 下面这两个是解析时候的上下文.
+	// unescaped: 正在处理 unescaped quote
 	private boolean unescaped;
+	// scanner 的上一个字符.
 	private char prev;
+
 	private char delimiter;
 	private char[] multiDelimiter;
-	private char quote;
+
+	private char quote; // 比如 " 是 quote, quoteEscape 可能是 ", "" 表示 quote 被 escape; 如果 quote 和 escape 不一样, escapeEscape 表示 escape 如何被处理
 	private char quoteEscape;
 	private char escapeEscape;
-	private char newLine;
+
+	private char newLine; // 切新一行的 \n
+
 	private final DefaultCharAppender whitespaceAppender;
 	private final boolean normalizeLineEndingsInQuotes;
 	private UnescapedQuoteHandling quoteHandling;
@@ -57,7 +66,7 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 	private final String emptyValue;
 	private final boolean trimQuotedLeading;
 	private final boolean trimQuotedTrailing;
-	private char[] delimiters;
+	private char[] delimiters; // delimiter, multiDelimiter 可以被视为配置, delimiters 是实际的
 	private int match = 0;
 	private int formatDetectorRowSampleCount;
 
@@ -105,6 +114,7 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 
 	@Override
 	protected final void parseRecord() {
+		// 按照是否有 multiDelimiter, 来解析单行 / 多行
 		if (multiDelimiter == null) {
 			parseSingleDelimiterRecord();
 		} else {
@@ -112,39 +122,54 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 		}
 	}
 
+	// 解析单行的记录
 	private final void parseSingleDelimiterRecord() {
+		// 跳掉 whiteSpace, 这个应该是行 leading?
 		if (ch <= ' ' && ignoreLeadingWhitespace && whitespaceRangeStart < ch) {
 			ch = input.skipWhitespace(ch, delimiter, quote);
 		}
 
-		while (ch != newLine) {
+		while (ch != newLine) { // 没切行的时候.
+			// 跳过记录级别的 whitespace
 			if (ch <= ' ' && ignoreLeadingWhitespace && whitespaceRangeStart < ch) {
-				ch = input.skipWhitespace(ch, delimiter, quote);
+				ch = input.skipWhitespace(ch, delimiter, quote); // 遇到 delimiter 或者 quote 就停止.
 			}
 
 			if (ch == delimiter || ch == newLine) {
+				// 读到一条空记录 或者直接是换行符, 就 emptyParsed.
 				output.emptyParsed();
 			} else {
+				// 否则, 先设置 prev 和 unescaped 表示状态
 				unescaped = false;
 				prev = '\0';
-				if (ch == quote) {
+
+				if (ch == quote) { // 开启 quote 模式
+					// 手动吐出一些解析的 line, 内容肯定都会返回 newLine
 					input.enableNormalizeLineEndings(normalizeLineEndingsInQuotes);
-					int len = output.appender.length();
-					if (len == 0) {
-						String value = input.getQuotedString(quote, quoteEscape, escapeEscape, maxColumnLength, delimiter, newLine, keepQuotes, keepEscape, trimQuotedLeading, trimQuotedTrailing);
+					int len = output.appender.length(); // 拿到最新的记录, 这个首先看看 record 有没有结尾. 顺便看看长度, -1 是说应该 skip.
+					if (len == 0) { // 这是一条新记录
+						// 读一个 quoted string
+						String value = input.getQuotedString(quote, quoteEscape, escapeEscape, maxColumnLength, delimiter,
+								newLine, /* 是否保留 quote, 默认肯定 false */ keepQuotes,  /* 是否保留 escape, 默认肯定 false */ keepEscape,
+								trimQuotedLeading, trimQuotedTrailing);
+						// TODO(maple): 什么时候会是 null?
 						if (value != null) {
+							// 看情况提交一个内容.
+							// TODO(mwish): 这个 empty value 是什么情况
 							output.valueParsed(value == "" ? emptyValue : value);
+							// 设回来
 							input.enableNormalizeLineEndings(true);
+							// ch 不等于之前了, 需要重置 ch
 							try {
 								ch = input.nextChar();
-								if (ch == delimiter) {
+								if (ch == delimiter) { // 如果是 delimiter, 那么这里提交了记录，需要切到下一个记录
 									try {
-										ch = input.nextChar();
-										if (ch == newLine) {
+										ch = input.nextChar(); // peek 下一个记录, 作为真正的 ch
+										if (ch == newLine) { // delimiter 后面跟了 newLine, 那么 emit 一个 empty
 											output.emptyParsed();
 										}
 									} catch (EOFException e) {
-										output.emptyParsed();
+										output.emptyParsed(); // nextChar 是空的, 所以 emit 一个 empty
 										return;
 									}
 								}
@@ -154,6 +179,9 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 							continue;
 						}
 					} else if (len == -1 && input.skipQuotedString(quote, quoteEscape, delimiter, newLine)) {
+						// Q: 为什么他妈的 skip 了?????
+						// A: 如果这个字段需要被 skip, 返回的 length 就是 -1：
+						//    见: https://github.com/uniVocity/univocity-parsers/commit/6746adc2ddb420ebba7441339887e4bbc35cf087
 						output.valueParsed();
 						try {
 							ch = input.nextChar();
@@ -173,22 +201,31 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 						}
 						continue;
 					}
+					// 上面两个都是单行的处理, 当没处理完的时候, fallback 到 `parseQuotedValue()`, 来处理:
+					// 1. 多行
+					// 2. 需要额外 ref 的数据
+					// 没 continue 就要处理跨行的 quote.
 					output.trim = trimQuotedTrailing;
-					parseQuotedValue();
+					parseQuotedValue(); // 完整解析 quotedValue.
 					input.enableNormalizeLineEndings(true);
+					// 满足要求的去走 ValueParsed
+					// TODO(maple): 这个状态机我真逗不清楚了
 					if (!(unescaped && quoteHandling == BACK_TO_DELIMITER && output.appender.length() == 0)) {
 						output.valueParsed();
 					}
 				} else if (doNotEscapeUnquotedValues) {
+					// doNotEscapeUnquotedValues 默认的配置, 对 unquote 的 a""b 之类的读的还是 a"b
 					String value = null;
 					int len = output.appender.length();
 					if (len == 0) {
+						// TODO(maple): getString 返回 null 是什么场景
 						value = input.getString(ch, delimiter, ignoreTrailingWhitespace, nullValue, maxColumnLength);
 					}
 					if (value != null) {
 						output.valueParsed(value);
 						ch = input.getChar();
 					} else {
+						// 尝试 appendUntil, 然后读
 						if (len != -1) {
 							output.trim = ignoreTrailingWhitespace;
 							ch = output.appender.appendUntil(ch, input, delimiter, newLine);
@@ -202,6 +239,7 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 						output.valueParsed();
 					}
 				} else {
+					// escape unquoted values.
 					output.trim = ignoreTrailingWhitespace;
 					parseValueProcessingEscape();
 					output.valueParsed();
@@ -217,11 +255,14 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 	}
 
 	private void skipValue() {
+		// 把自己设置为 noop char appender.
 		output.appender.reset();
 		output.appender = NoopCharAppender.getInstance();
 		if (multiDelimiter == null) {
+			// 非 multi, 就读到尾部
 			ch = NoopCharAppender.getInstance().appendUntil(ch, input, delimiter, newLine);
 		} else {
+			// TODO(maple): 怎么处理
 			for (; match < multiDelimiter.length && ch != newLine; ch = input.nextChar()) {
 				if (multiDelimiter[match] == ch) {
 					match++;
@@ -306,10 +347,12 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 				return true;
 			case STOP_AT_CLOSING_QUOTE:
 			case STOP_AT_DELIMITER:
+				// STOP_AT_DELIMITER 会给现有上下文加上 quote + ch, 当成正常文本.
 				output.appender.append(quote);
 				output.appender.append(ch);
-				prev = ch;
+				prev = ch; // prev 设置为现有的 prev, 表示有别的上下文.
 				if (multiDelimiter == null) {
+					// 递归的继续 parsing.
 					parseQuotedValue();
 				} else {
 					parseQuotedValueMultiDelimiter();
@@ -346,6 +389,7 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 	}
 
 	private void parseValueProcessingEscape() {
+		// 没有处理到 delimiter 和 newLine 的时候
 		while (ch != delimiter && ch != newLine) {
 			if (ch != quote && ch != quoteEscape) {
 				if (prev == quote) { //unescaped quote detected
@@ -362,35 +406,49 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 	}
 
 	private void parseQuotedValue() {
+		// TODO(maple): prev != \0 是什么意思
+		// until delimiter: https://github.com/uniVocity/univocity-parsers/commit/72519a11de81f388cb528542170795dc02d4d9d6
 		if (prev != '\0' && parseUnescapedQuotesUntilDelimiter) {
+			// 如果是 skipValue, 需要跳转到 ',', 来跳过这条记录.
 			if (quoteHandling == SKIP_VALUE) {
 				skipValue();
 				return;
 			}
+			// 如果是 stopAtDelimiter, 那么需要读到结束
 			if (!keepQuotes) {
 				output.appender.prepend(quote);
 			}
 			ch = input.nextChar();
 			output.trim = ignoreTrailingWhitespace;
+			// 往前尽量读
 			ch = output.appender.appendUntil(ch, input, delimiter, newLine);
 		} else {
+			// 如果要 keepQuotes, 就需要保留 quote.
 			if (keepQuotes && prev == '\0') {
 				output.appender.append(quote);
 			}
 			ch = input.nextChar();
 
+			// trim 掉内部前面的
 			if (trimQuotedLeading && ch <= ' ' && output.appender.length() == 0) {
 				while ((ch = input.nextChar()) <= ' ') ;
 			}
 
 			while (true) {
+				// quote + ' ' / delimiter / newLine, 说明解析完了
+				// <= 是因为: https://github.com/uniVocity/univocity-parsers/issues/115 , 这里希望解析看不到的.
 				if (prev == quote && (ch <= ' ' && whitespaceRangeStart < ch || ch == delimiter || ch == newLine)) {
 					break;
 				}
 
+				// 算法: 往前推进, 如果碰到 quote / quoteEscape, 那么特殊处理, 否则一直推进
+				// quote + quoteEscape -> quote
+				//
 				if (ch != quote && ch != quoteEscape) {
 					if (prev == quote) { //unescaped quote detected
+						// 返回 true 代表能够继续解析.
 						if (handleUnescapedQuote()) {
+							// TODO(maple): 这个 if else 我没搞懂.
 							if (quoteHandling == SKIP_VALUE) {
 								break;
 							} else {
@@ -400,6 +458,7 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 							return;
 						}
 					}
+					// 单个 quoteEscape 会被处理成 quoteEscape 本身, 不需要转义.
 					if (prev == quoteEscape && quoteEscape != '\0') {
 						output.appender.append(quoteEscape);
 					}
@@ -407,6 +466,8 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 					prev = ch;
 					ch = input.nextChar();
 				} else {
+					// ch == quote || ch == quoteEscape
+					// 处理 quote escape
 					processQuoteEscape();
 					prev = ch;
 					ch = input.nextChar();
@@ -417,6 +478,8 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 			}
 
 			// handles whitespaces after quoted value: whitespaces are ignored. Content after whitespaces may be parsed if 'parseUnescapedQuotes' is enabled.
+			//
+			// 处理(可能) 有的 whiteSpace.
 			if (ch != delimiter && ch != newLine && ch <= ' ' && whitespaceRangeStart < ch) {
 				whitespaceAppender.reset();
 				do {
@@ -702,9 +765,11 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 			}
 
 			while (true) {
+				// 遇到 newLine 也 break, `",` 之类的, 处理完了
 				if (prev == quote && (ch <= ' ' && whitespaceRangeStart < ch || ch == newLine)) {
 					break;
 				}
+				// quote + multi delimiter: https://github.com/uniVocity/univocity-parsers/issues/404
 				if (prev == quote && matchDelimiter()) {
 					if (keepQuotes) {
 						output.appender.append(quote);
@@ -724,9 +789,12 @@ public final class CsvParser extends AbstractParser<CsvParserSettings> {
 							return;
 						}
 					}
+					// 单个 quoteEscape 不要紧的, 这里主要是 quoteEscape != quote 的情况.
 					if (prev == quoteEscape && quoteEscape != '\0') {
 						output.appender.append(quoteEscape);
 					}
+					// 往后傻插, 直到遇到 quote / quoteEscape / escapeEscape
+					// (那换行符呢...不重要, 这里其实是 ignore 换行符的...)
 					ch = output.appender.appendUntil(ch, input, quote, quoteEscape, escapeEscape);
 					prev = ch;
 					ch = input.nextChar();

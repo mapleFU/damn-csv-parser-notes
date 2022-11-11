@@ -246,6 +246,8 @@ public abstract class AbstractParser<T extends CommonParserSettings<?>> {
 	 * The user may invoke @link {@link AbstractParser#stopParsing()} to stop reading from the input.
 	 *
 	 * @param reader The input to be parsed.
+	 *
+	 * 设置一个 Reader 作为数据源, 开始解析.
 	 */
 	public final void beginParsing(Reader reader) {
 		output.reset();
@@ -569,13 +571,16 @@ public abstract class AbstractParser<T extends CommonParserSettings<?>> {
 	 * unless {@link CommonParserSettings#isAutoClosingEnabled()} evaluates to {@code false}.
 	 *
 	 * @return The record parsed from the input or null if there's no more characters to read.
+	 *
+	 * parse csv 的下一条记录, 返回对应的, 外层会调用这个来实现对应的逻辑
 	 */
 	public final String[] parseNext() {
 		try {
 			while (!context.isStopped()) {
 				input.markRecordStart();
 				ch = input.nextChar();
-				if (processComments && inComment()) {
+				if (processComments && /* 这个东西是 comment */ inComment()) {
+					// 处理 comment, 跳过这行
 					processComment();
 					continue;
 				}
@@ -679,16 +684,20 @@ public abstract class AbstractParser<T extends CommonParserSettings<?>> {
 		}
 		try {
 			while (!context.isStopped()) {
-				input.markRecordStart();
-				ch = input.nextChar();
-				if (processComments && inComment()) {
-					processComment();
+				input.markRecordStart(); // 标记一条记录开始了.
+				ch = input.nextChar();   // 吐出下一个 char.
+				// 这个只在 line 首部处理, 一旦读到, 一整行都没了.
+				if (processComments && inComment()) { // 如果需要处理 comment, 然后这里是 comment
+					processComment(); // 处理 comment
 					return null;
 				}
+				// 解析一个记录 {comment or record}.
 				if (output.pendingRecords.isEmpty()) {
 					parseRecord();
 				}
+				// 拿到 parsed 的记录
 				String[] row = output.rowParsed();
+				// 手动设置了 processor, 我们默认忽略.
 				if (row != null) {
 					if (processor != NoopProcessor.instance) {
 						rowProcessed(row);

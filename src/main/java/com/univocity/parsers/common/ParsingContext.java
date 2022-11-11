@@ -22,6 +22,8 @@ import java.util.*;
 /**
  * Parsing context information available to instances of {@link RowProcessor}.
  *
+ * Row 解析的上下文,
+ *
  * <p> The ParsingContext can be used to control and to obtain information about the parsing process.
  *
  * @author Univocity Software Pty Ltd - <a href="mailto:parsers@univocity.com">parsers@univocity.com</a>

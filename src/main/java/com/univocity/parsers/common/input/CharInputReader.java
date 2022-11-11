@@ -136,6 +136,8 @@ public interface CharInputReader extends CharInput {
 
 	/**
 	 * Marks the start of a new record in the input, used internally to calculate the result of {@link #currentParsedContent()}
+	 *
+	 * 可能会清除掉 buffer 的内存.
 	 */
 	void markRecordStart();
 
@@ -144,6 +146,8 @@ public interface CharInputReader extends CharInput {
 	 * or a line ending is reached. If the {@code String} can be obtained, the current position of the parser will be updated to
 	 * the last consumed character. If the internal buffer needs to be reloaded, this method will return {@code null}
 	 * and the current position of the buffer will remain unchanged.
+	 *
+	 * getString 会添加字符串, 语义也是, buffer 满了就会返回.
 	 *
 	 * @param ch        the current character to be considered. If equal to the stop character the {@code nullValue} will be returned
 	 * @param stop      the stop character that identifies the end of the content to be collected
@@ -174,6 +178,8 @@ public interface CharInputReader extends CharInput {
 	 * the last consumed character. If the internal buffer needs to be reloaded, this method will return {@code null}
 	 * and the current position of the buffer will remain unchanged.
 	 *
+	 * 到达 lineEnd 的时候, 这里也会返回. 返回 null 的时候, 内容被视作未消费.
+	 *
 	 * @param quote the quote character
 	 * @param escape the quote escape character
 	 * @param escapeEscape the escape of the quote escape character
@@ -193,6 +199,9 @@ public interface CharInputReader extends CharInput {
 	 * or a line ending is reached. If the {@code String} can be skipped, the current position of the parser will be updated to
 	 * the last consumed character. If the internal buffer needs to be reloaded, this method will return {@code false}
 	 * and the current position of the buffer will remain unchanged.
+	 *
+	 * 到达 lineEnd 的时候, 这里也会返回. 返回 false 的时候要求 buffer 位置不改变. 一般可能一 delimiter 和 lineSep 作为 stop.
+	 * TODO(maple): 如果 lineSep 是多个符号, 比如 CRLF, 这里怎么搞?
 	 *
 	 * @param quote the quote character
 	 * @param escape the quote escape character

@@ -58,6 +58,8 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 
 	private char ch;
 
+	// TODO(maple): 这段怎么搞.
+
 	/**
 	 * The buffer itself
 	 */
@@ -276,6 +278,7 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 
 		ch = buffer[i++];
 
+		// 切换到下一个 buffer, 尽量让之后都有
 		if (i >= length) {
 			updateBuffer();
 		}
@@ -283,11 +286,11 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 		if (lineSeparator1 == ch && (lineSeparator2 == '\0' || length != -1 && lineSeparator2 == buffer[i])) {
 			lineCount++;
 			if (normalizeLineEndings) {
-				ch = normalizedLineSeparator;
-				if (lineSeparator2 == '\0') {
+				ch = normalizedLineSeparator; // 替换成 normalized
+				if (lineSeparator2 == '\0') { // 如果 lineSep 只有一个字符, 那就返回 `normalized`
 					return ch;
 				}
-				if (++i >= length) {
+				if (++i >= length) { // 跳过第二个字符.
 					if (length != -1) {
 						updateBuffer();
 					} else {
@@ -499,25 +502,29 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 
 	@Override
 	public final String getQuotedString(char quote, char escape, char escapeEscape, int maxLength, char stop1, char stop2, boolean keepQuotes, boolean keepEscape, boolean trimLeading, boolean trimTrailing) {
-		if (i == 0) {
+		if (i == 0) { // 什么垃圾我操, 大概是必须尝试 eat 掉一个 quote token.
 			return null;
 		}
 
 		int i = this.i;
 
 		while (true) {
+			// 超过了, 走
 			if (i >= length) {
 				return null;
 			}
 			ch = buffer[i];
 			if (ch == quote) {
+				// 如果上一个是 escape, 那么不做任何处理, 需要从字符串上拷贝一段.
 				if (buffer[i - 1] == escape) {
+					// KeepEscape 的话, 就不需要 break, 否则需要拷贝原来的字符串.
 					if (keepEscape) {
 						i++;
 						continue;
 					}
 					return null;
 				}
+				// 前瞻一个字符, 查看是不是一个 ending quote.
 				if (i + 1 < length) {
 					char next = buffer[i + 1];
 					if (next == stop1 || next == stop2) {
@@ -527,6 +534,9 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 
 				return null;
 			} else if (ch == escape && !keepEscape) {
+				// 遇到 escape, 如果不 keep escape, 那么
+				// 尝试前瞻一个字符, 如果 escape 起到了作用, 即下一个是 quote, 那么滚了
+				// TODO(maple): 这个地方 escape + 别的字符实际上处于没处理状态吧...
 				if (i + 1 < length) {
 					char next = buffer[i + 1];
 					if (next == quote || next == escapeEscape) {
@@ -534,11 +544,13 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 					}
 				}
 			} else if (lineSeparator1 == ch && normalizeLineEndings && (lineSeparator2 == '\0' || i + 1 < length && lineSeparator2 == buffer[i + 1])) {
+				// 在遇到有效 quote 之前就换行了
 				return null;
 			}
 			i++;
 		}
 
+		// ref 一份 buffer 然后返回.
 		int pos = this.i;
 		int len = i - this.i;
 		if (maxLength != -1 && len > maxLength) { //validating before trailing whitespace handling so this behaves as an appender.
@@ -577,39 +589,55 @@ public abstract class AbstractCharInputReader implements CharInputReader {
 		return out;
 	}
 
+	// 这个函数不能处理:
+	// 1. 没消费完 buffer
+	// 2. 遇到了换行符
+	// 两种场景. 2 可以理解, 1 我都不太理解为什么
 	public final boolean skipQuotedString(char quote, char escape, char stop1, char stop2) {
 		if (i == 0) {
 			return false;
 		}
 
-		int i = this.i;
+		int i = this.i; // 设置一个现有的位置, 因为没有遇到 stop 的话, 不应该消费 contents.
 
 		while (true) {
-			if (i >= length) {
+			if (i >= length) { // 已经读完了所有的内容, 返回 false, 不做消费.
 				return false;
 			}
+			// 现在处理的 buf
 			ch = buffer[i];
+			// 如果自己是 quote, 那么 prev 看看上一个是不是 escape
+			// 因为第一个左 quote 不会包含在内。
 			if (ch == quote) {
+				// 遇到了 "", 跳出.
 				if (buffer[i - 1] == escape) {
 					i++;
 					continue;
 				}
 				if (i + 1 < length) {
+					// 前瞻一个字符, 等于 stop1(,) 或者 stop2(换行) 即脱出.
+					// 这里是说明, 如果匹配到了 `",` 或者 `"\n`, 需要 break.
 					char next = buffer[i + 1];
 					if (next == stop1 || next == stop2) {
 						break;
 					}
 				}
 
+				// notice: 如果是 `" ,`, 这种下一个不是 stop 的, 就会 return false, 不会实际消费内容
 				return false;
 			} else if (lineSeparator1 == ch && normalizeLineEndings && (lineSeparator2 == '\0' || i + 1 < length && lineSeparator2 == buffer[i + 1])) {
+				// 不等于 quote 的时候, 如果遇到了换行, 就会 break
+				// 我不知道为啥会这样, 可能得看看 multiline 怎么处理的
 				return false;
 			}
 			i++;
 		}
 
+		// step forward.
+		// 如果是 break
 		this.i = i + 1;
 
+		// i 在范围内, i + 1 超过了 length, 这个地方返回 false.
 		if (this.i >= length) {
 			updateBuffer();
 		}
